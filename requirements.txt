@@ -1,8 +1,10 @@
-numpy==1.26.4
-tensorflow-datasets==4.9.3
-tensorflow==2.16.1
-PyYAML==6.0.1
-scikit-learn==1.4.2
-matplotlib==3.9.0
-pandas==2.2.1
-pytest==8.2.0
+cat > /mnt/user-data/outputs/requirements.txt << 'EOF'
+numpy>=1.24
+pandas>=2.0
+pyyaml>=6.0
+matplotlib>=3.7
+pytest>=7.4
+tensorflow>=2.13
+tensorflow-datasets>=4.9
+importlib_resources>=6.0
+EOF

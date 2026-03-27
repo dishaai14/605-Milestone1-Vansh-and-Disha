@@ -1,153 +1,120 @@
-# MSML 605 — Face Verification Pipeline (Milestones 1 & 2)
+# Face Verification Pipeline — Milestone 2
 
 ## Project Overview
 
-This project builds a reproducible face verification system on the LFW (Labeled Faces in the Wild)
-dataset. Given two face images, the system produces a cosine similarity score and a same-person /
-different-person decision based on a calibrated threshold.
+This project builds a reproducible face verification system on LFW. Given two face images, the pipeline produces a cosine-similarity score and a same/different-person binary decision. Milestone 2 adds a disciplined evaluation loop: threshold sweeps, run tracking, error analysis, a data-centric improvement, and tests.
 
-**Milestone 1** established the deterministic backbone: LFW ingestion, identity-split pair
-generation, and vectorized similarity scoring with benchmarking.
+## Milestone 2 Summary
 
-**Milestone 2** adds the disciplined evaluation loop: threshold calibration on a held-out
-validation set, error analysis, a data-centric improvement (identity-count capping), experiment
-tracking across 5 logged runs, and a 2-page PDF report.
+**Baseline (v1):** Cosine similarity on flattened, L2-normalized pixel vectors. Threshold selected on the val split by maximizing balanced accuracy.
+
+**Data-centric improvement (v2):** Capped overrepresented identities to at most 10 images (`max_images_per_identity=10`) so no single identity dominates the pair distribution. New pairs generated into `outputs/pairs_v2/`. Threshold re-selected on the same val split.
+
+**Report:** `reports/milestone2_report.pdf`
 
 ---
 
-## Repo Layout
+## Repository Structure
 
 ```
-configs/
-  m1.yaml                  # seed, paths, split/pair/benchmark settings
-  m2.yaml                  # feature extraction, evaluation, tracking, report paths
-src/
-  similarity.py            # vectorized cosine similarity and Euclidean distance (M1)
-  features.py              # image feature extraction (32x32 grayscale → L2-norm vector)
-  evaluation.py            # threshold sweep, metrics, ROC plot, confusion matrix
-  tracking.py              # JSON-based run tracker
-  validation.py            # pipeline input/output validation checks
-scripts/
-  ingest_lfw.py            # download LFW, split by identity, write manifest
-  make_pairs.py            # generate deterministic baseline pair CSVs
-  bench_similarity.py      # NumPy vs loop benchmark
-  extract_features.py      # build outputs/features.npz from TFDS cache
-  make_pairs_improved.py   # data-centric improvement: cap images per identity
-  run_evaluation.py        # execute one of 5 tracked evaluation runs
-  generate_report.py       # produce 2-page PDF report
-tests/
-  test_metrics.py          # unit tests for metric computation
-  test_validation.py       # unit tests for validation checks
-  test_integration.py      # end-to-end integration test (synthetic data, no TFDS)
-reports/
-  milestone2_report.pdf    # generated evaluation report (committed as grading evidence)
-data/                      # TFDS dataset cache — NOT committed
-outputs/                   # generated artifacts — NOT committed
+repo_root/
+├── configs/
+│   ├── m1.yaml              # Milestone 1 config
+│   ├── m2.yaml              # Milestone 2 baseline config
+│   └── m2_capped.yaml       # Data-centric v2 config
+├── src/
+│   ├── similarity.py        # Vectorized cosine & Euclidean
+│   ├── metrics.py           # ROC, confusion matrix, threshold selection
+│   ├── validation.py        # Input/output validation checks
+│   ├── tracking.py          # Run logging (JSONL + CSV)
+│   ├── error_analysis.py    # Error slicing utilities
+│   └── scoring.py           # Pair scorer (pixel cosine)
+├── scripts/
+│   ├── ingest_lfw.py        # LFW ingestion and split
+│   ├── make_pairs.py        # Pair generation (v1 + v2 with capping)
+│   ├── bench_similarity.py  # Loop vs vectorized benchmark
+│   ├── evaluate.py          # Threshold sweep, metrics, run logging
+│   └── run_all.sh           # Reproduce all 5 tracked runs
+├── tests/
+│   ├── conftest.py
+│   ├── test_unit.py         # Unit tests
+│   └── test_integration.py  # Small integration test
+├── reports/
+│   └── milestone2_report.pdf
+├── outputs/                 # Generated artifacts (not committed)
+│   ├── runs/                # runs.jsonl + runs_summary.csv
+│   ├── eval/                # v1 sweep, ROC, confusion matrix, error analysis
+│   └── eval_v2/             # v2 equivalents
+└── data/                    # Dataset cache (not committed)
 ```
 
 ---
 
 ## How to Run
 
-### 1. Set up environment
-
+### 1. Environment setup
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. Milestone 1 — Ingest and prepare data
-
+### 2. Ingest LFW and generate splits
 ```bash
-python scripts/ingest_lfw.py --config configs/m1.yaml
-python scripts/make_pairs.py --config configs/m1.yaml
-python scripts/bench_similarity.py --config configs/m1.yaml
+python scripts/ingest_lfw.py --config configs/m2.yaml
 ```
 
-### 3. Milestone 2 — Feature extraction and improved pairs
-
+### 3. Generate pairs (baseline v1)
 ```bash
-# Extract 32x32 grayscale L2-normalized features for all LFW images
-python scripts/extract_features.py --config configs/m2.yaml
-
-# Generate improved pairs (cap each identity to 5 images)
-python scripts/make_pairs_improved.py --config configs/m2.yaml
+python scripts/make_pairs.py --config configs/m2.yaml --data-version v1
 ```
 
-### 4. Milestone 2 — 5 tracked evaluation runs (run in this order)
-
+### 4. Generate pairs (v2 capped — data-centric improvement)
 ```bash
-python scripts/run_evaluation.py --config configs/m2.yaml --run baseline_val_sweep
-python scripts/run_evaluation.py --config configs/m2.yaml --run baseline_val_selected
-python scripts/run_evaluation.py --config configs/m2.yaml --run baseline_test_final
-python scripts/run_evaluation.py --config configs/m2.yaml --run improved_val_sweep
-python scripts/run_evaluation.py --config configs/m2.yaml --run improved_test_final
+python scripts/make_pairs.py --config configs/m2_capped.yaml --data-version v2
 ```
 
-Run results are logged to `outputs/runs.json`.
-
-### 5. Generate PDF report
-
+### 5. Run all 5 tracked runs (requires pairs already generated)
 ```bash
-python scripts/generate_report.py --config configs/m2.yaml
-# Output: reports/milestone2_report.pdf
+bash scripts/run_all.sh
+```
+
+Or run individual evaluations:
+```bash
+# Threshold sweep on val (baseline)
+python scripts/evaluate.py --config configs/m2.yaml --split val --sweep --data-version v1
+
+# Evaluate at a fixed threshold
+python scripts/evaluate.py --config configs/m2.yaml --split test --threshold 0.72 --data-version v1
 ```
 
 ### 6. Run tests
-
 ```bash
-python -m pytest tests/ -v
+pytest tests/ -v
 ```
 
 ---
 
-## Outputs Summary
+## Artifact Locations
 
-| File | Description |
+| Artifact | Path |
 |---|---|
-| `outputs/manifest.json` | Seed, split policy, counts per split |
-| `outputs/splits.json` | Identity IDs per split |
-| `outputs/pairs/{split}_pairs.csv` | Baseline pairs: left_path, right_path, label |
-| `outputs/pairs_improved/{split}_pairs.csv` | Improved pairs (identity-capped) |
-| `outputs/features.npz` | Feature vectors for all LFW images |
-| `outputs/eval/baseline_val_sweep.json` | Threshold sweep results (baseline) |
-| `outputs/eval/improved_val_sweep.json` | Threshold sweep results (improved) |
-| `outputs/eval/plots/*.png` | ROC curves and confusion matrices |
-| `outputs/runs.json` | All 5 tracked run records |
-| `reports/milestone2_report.pdf` | 2-page evaluation report |
+| Tracked runs (JSONL) | `outputs/runs/runs.jsonl` |
+| Run summary (CSV) | `outputs/runs/runs_summary.csv` |
+| ROC curve (baseline) | `outputs/eval/val/roc.png` |
+| Confusion matrix (baseline) | `outputs/eval/val/confusion_matrix.png` |
+| Selected threshold (baseline) | `outputs/eval/val/selected_threshold.json` |
+| Error analysis (baseline) | `outputs/eval/val/error_analysis.json` |
+| ROC curve (v2) | `outputs/eval_v2/val/roc.png` |
+| Milestone 2 report | `reports/milestone2_report.pdf` |
 
 ---
 
 ## Threshold Selection Rule
 
-Threshold is selected on the **validation set** by maximizing balanced accuracy
-`(TPR + TNR) / 2`. The same rule is applied for both baseline and improved-data runs
-before any test-set inspection.
+Threshold is selected on the **val split** by maximizing **balanced accuracy** across a sweep of 100 evenly spaced thresholds. The rule is applied identically for both v1 and v2 runs. The locked threshold is then applied to the held-out **test split** for final reporting.
 
 ---
 
-## Data-Centric Improvement
+## Notes
 
-**Problem:** Without capping, high-frequency identities dominate the positive pair pool,
-making evaluation unrepresentative.
-
-**Change:** Cap each identity to at most 5 images before pair sampling
-(`improved_max_images_per_identity: 5` in `m2.yaml`). This produces a more diverse and
-uniformly difficult positive evaluation set.
-
----
-
-## Determinism Notes
-
-- Seed: `42` in both configs
-- All shuffles use `random.Random(seed)` with sorted inputs
-- Feature extraction iterates TFDS with `shuffle_files=False`
-- Running any script twice produces identical outputs
-
----
-
-## Git Tags
-
-- `v0.1` — Milestone 1
-- `v0.2` — Milestone 2
+- `evaluate.py` uses a mock scorer by default (reproducible, no dataset required). Pass `--use-real-scores` to use the pixel-cosine scorer with real TFDS data.
+- The integration test (`tests/test_integration.py`) uses synthetic pairs and runs without the LFW dataset.

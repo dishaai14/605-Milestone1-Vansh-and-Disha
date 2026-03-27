@@ -1,68 +1,87 @@
 """
-Pipeline validation checks.
-Validates pair DataFrames and feature map coverage before evaluation.
-Fails early with descriptive errors to prevent silent failures.
+Validation checks for pipeline inputs, pair files, and config values.
 """
 
-import pandas as pd
-import numpy as np
+import os
+import csv
+from typing import List, Dict, Any
 
 
-REQUIRED_PAIR_COLUMNS = {"left_path", "right_path", "label"}
-VALID_LABELS = {0, 1}
+REQUIRED_PAIR_COLUMNS = {"left_path", "right_path", "label", "split"}
+VALID_LABELS = {0, 1, "0", "1"}
+VALID_SPLITS = {"train", "val", "test"}
 
 
-def validate_pairs_df(df: pd.DataFrame) -> None:
-    """
-    Validate a pairs DataFrame.
-    Raises ValueError if any check fails.
-    """
-    missing_cols = REQUIRED_PAIR_COLUMNS - set(df.columns)
-    if missing_cols:
-        raise ValueError(f"Pairs DataFrame missing columns: {missing_cols}")
-
-    if df.empty:
-        raise ValueError("Pairs DataFrame is empty.")
-
-    null_counts = df[["left_path", "right_path", "label"]].isnull().sum()
-    if null_counts.any():
-        raise ValueError(f"Pairs DataFrame has null values: {null_counts[null_counts > 0].to_dict()}")
-
-    bad_labels = set(df["label"].unique()) - VALID_LABELS
-    if bad_labels:
-        raise ValueError(f"Invalid label values found: {bad_labels}. Expected values in {{0, 1}}.")
-
-    n_pos = (df["label"] == 1).sum()
-    n_neg = (df["label"] == 0).sum()
-    if n_pos == 0:
-        raise ValueError("Pairs DataFrame has no positive pairs (label=1).")
-    if n_neg == 0:
-        raise ValueError("Pairs DataFrame has no negative pairs (label=0).")
+def validate_pair_file(csv_path: str, check_paths: bool = False) -> List[str]:
+    errors = []
+    if not os.path.exists(csv_path):
+        return [f"Pair file not found: {csv_path}"]
+    with open(csv_path, "r") as f:
+        reader = csv.DictReader(f)
+        cols = set(reader.fieldnames or [])
+        missing = REQUIRED_PAIR_COLUMNS - cols
+        if missing:
+            errors.append(f"Missing columns: {missing}")
+            return errors
+        for i, row in enumerate(reader):
+            if row["label"] not in VALID_LABELS:
+                errors.append(f"Row {i}: invalid label '{row['label']}'")
+            if row["split"] not in VALID_SPLITS:
+                errors.append(f"Row {i}: invalid split '{row['split']}'")
+            if check_paths:
+                for col in ("left_path", "right_path"):
+                    if not os.path.exists(row[col]):
+                        errors.append(f"Row {i}: path not found '{row[col]}'")
+    return errors
 
 
-def validate_features_coverage(features: dict, pairs_df: pd.DataFrame) -> None:
-    """
-    Check that every record ID in the pairs DataFrame exists in the features dict.
-    Raises ValueError listing missing IDs if any are absent.
-    """
-    all_ids = set(pairs_df["left_path"]) | set(pairs_df["right_path"])
-    missing = all_ids - set(features.keys())
-    if missing:
-        examples = list(missing)[:5]
-        raise ValueError(
-            f"{len(missing)} record IDs in pairs not found in features dict. "
-            f"Examples: {examples}"
-        )
+def validate_scores_match_pairs(scores, pairs_df) -> List[str]:
+    errors = []
+    if len(scores) != len(pairs_df):
+        errors.append(f"Score count {len(scores)} != pair count {len(pairs_df)}")
+    return errors
 
 
-def validate_metrics(metrics: dict) -> None:
-    """
-    Validate that computed metrics are within expected ranges.
-    Raises ValueError if anything is out of range.
-    """
-    bounded = ["accuracy", "balanced_accuracy", "FAR", "FRR", "TPR", "TNR", "F1"]
-    for key in bounded:
-        if key in metrics:
-            val = metrics[key]
-            if not (0.0 <= val <= 1.0):
-                raise ValueError(f"Metric '{key}' out of range [0, 1]: {val}")
+def validate_threshold(threshold: float, score_min: float = -1.0, score_max: float = 1.0) -> List[str]:
+    errors = []
+    if not isinstance(threshold, (int, float)):
+        errors.append(f"Threshold must be numeric, got {type(threshold)}")
+    elif not (score_min <= threshold <= score_max):
+        errors.append(f"Threshold {threshold} outside expected range [{score_min}, {score_max}]")
+    return errors
+
+
+def validate_config(config: Dict[str, Any]) -> List[str]:
+    errors = []
+    required_keys = ["seed", "data", "split_policy", "pairs", "manifest", "benchmark"]
+    for k in required_keys:
+        if k not in config:
+            errors.append(f"Missing config key: {k}")
+    if "split_policy" in config:
+        sp = config["split_policy"]
+        for s in ("train", "val", "test"):
+            if s not in sp:
+                errors.append(f"Missing split ratio: {s}")
+        if all(s in sp for s in ("train", "val", "test")):
+            total = sp["train"] + sp["val"] + sp["test"]
+            if abs(total - 1.0) > 1e-6:
+                errors.append(f"Split ratios sum to {total}, expected 1.0")
+    return errors
+
+
+def validate_no_split_leakage(splits: Dict[str, List]) -> List[str]:
+    errors = []
+    sets = {k: set(v) for k, v in splits.items()}
+    split_names = list(sets.keys())
+    for i in range(len(split_names)):
+        for j in range(i + 1, len(split_names)):
+            overlap = sets[split_names[i]] & sets[split_names[j]]
+            if overlap:
+                errors.append(f"Leakage between {split_names[i]} and {split_names[j]}: {len(overlap)} identities")
+    return errors
+
+
+def assert_valid(errors: List[str], context: str = "") -> None:
+    if errors:
+        prefix = f"[{context}] " if context else ""
+        raise ValueError(f"{prefix}Validation failed:\n" + "\n".join(f"  - {e}" for e in errors))

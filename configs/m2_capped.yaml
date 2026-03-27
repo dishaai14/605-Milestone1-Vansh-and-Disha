@@ -14,9 +14,8 @@ split_policy:
 pairs:
   num_positive_per_split: 500
   num_negative_per_split: 500
-  output_dir: "outputs/pairs"
-  # Data-centric controls (v2): set max_images_per_identity to cap overrepresented identities
-  max_images_per_identity: null   # null = no cap (v1 baseline); set e.g. 10 for v2
+  output_dir: "outputs/pairs_v2"
+  max_images_per_identity: 10   # cap overrepresented identities
   min_images_for_positive: 2
 
 manifest:
@@ -31,7 +30,6 @@ evaluation:
   threshold_sweep:
     n_thresholds: 100
   threshold_selection_rule: "max_balanced_accuracy"
-  # After val sweep, lock the selected threshold here for final test reporting
-  locked_threshold: null   # fill in after val sweep
-  artifacts_dir: "outputs/eval"
+  locked_threshold: null
+  artifacts_dir: "outputs/eval_v2"
   runs_dir: "outputs/runs"
